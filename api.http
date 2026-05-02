@@ -1,0 +1,53 @@
+### StudExE4 Driver Service API Tests
+### This file follows the flow: User Service Registration -> Driver Service Linking
+
+@gatewayUrl = http://localhost:8080
+@userServiceUrl = http://localhost:8081
+@driverServiceUrl = http://localhost:8082
+@phone = 628123456789
+
+### STEP 1: Register/Check User in User Service
+# This happens first when the bot identifies a new phone number.
+POST {{userServiceUrl}}/users/register
+Content-Type: application/json
+
+{
+    "phone": "{{phone}}"
+}
+
+### STEP 2: Get User ID
+# We need the MongoDB _id from the User service to link the driver.
+GET {{userServiceUrl}}/users/{{phone}}
+
+### STEP 3: Create/Link Driver in Driver Service
+# Use the "id" from the previous response as "user_id" here.
+POST {{driverServiceUrl}}/drivers/auth
+Content-Type: application/json
+
+{
+    "phone": "{{phone}}",
+    "user_id": "PASTE_USER_ID_HERE"
+}
+
+### STEP 4: Admin Completes Driver Data (Manual CRUD)
+# Fill in Vehicle Type and Plate Number to "Verify" the driver.
+PUT {{driverServiceUrl}}/drivers/me?phone={{phone}}
+Content-Type: application/json
+
+{
+    "name": "John Driver",
+    "display_name": "John D.",
+    "vehicle_type": "Bike",
+    "plate_number": "B 1234 ABC"
+}
+
+### STEP 5: Toggle Online Status (Used by Bot !on/!off)
+PUT {{driverServiceUrl}}/drivers/me/status?phone={{phone}}
+Content-Type: application/json
+
+{
+    "is_online": true
+}
+
+### STEP 6: Get Driver Info
+GET {{driverServiceUrl}}/drivers/me?phone={{phone}}

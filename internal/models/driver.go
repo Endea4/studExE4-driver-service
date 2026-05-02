@@ -8,6 +8,7 @@ import (
 
 type Driver struct {
 	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID      primitive.ObjectID `bson:"user_id" json:"user_id"`
 	Phone       string             `bson:"phone" json:"phone"`
 	Name        string             `bson:"name" json:"name"`
 	DisplayName string             `bson:"display_name" json:"display_name"`

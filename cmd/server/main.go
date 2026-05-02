@@ -11,6 +11,7 @@ import (
 	"github.com/Endea4/studExE4-driver-service/internal/models"
 	"github.com/Endea4/studExE4-driver-service/internal/repository"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func main() {
@@ -30,7 +31,8 @@ func main() {
 
 	r.POST("/drivers/auth", func(c *gin.Context) {
 		var req struct {
-			Phone string `json:"phone" binding:"required"`
+			Phone  string `json:"phone" binding:"required"`
+			UserID string `json:"user_id"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "phone is required"})
@@ -40,8 +42,10 @@ func main() {
 		driver, err := driverRepo.GetByPhone(c.Request.Context(), req.Phone)
 		if err != nil {
 			now := time.Now()
+			uID, _ := primitive.ObjectIDFromHex(req.UserID)
 			driver = &models.Driver{
 				Phone:           req.Phone,
+				UserID:          uID,
 				IsActive:        true,
 				IsOnline:        false,
 				Status:          "offline",
