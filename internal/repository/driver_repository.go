@@ -52,12 +52,11 @@ func (r *DriverRepository) UpdateLocation(ctx context.Context, phone string, lat
 func (r *DriverRepository) SetOnlineStatus(ctx context.Context, phone string, online bool) error {
 	status := "offline"
 	if online {
-		status = "online"
+		status = "ready"
 	}
 	_, err := r.collection.UpdateOne(ctx, bson.M{"phone": phone}, bson.M{
 		"$set": bson.M{
-			"is_online": online,
-			"status":    status,
+			"status": status,
 		},
 	})
 	return err
@@ -68,4 +67,23 @@ func (r *DriverRepository) Upsert(ctx context.Context, phone string, driver *mod
 	filter := bson.M{"phone": phone}
 	update := bson.M{"$set": driver}
 	return r.collection.UpdateOne(ctx, filter, update, opts)
+}
+
+func (r *DriverRepository) GetAll(ctx context.Context) ([]models.Driver, error) {
+	cursor, err := r.collection.Find(ctx, bson.M{})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var drivers []models.Driver
+	if err := cursor.All(ctx, &drivers); err != nil {
+		return nil, err
+	}
+	return drivers, nil
+}
+
+func (r *DriverRepository) Delete(ctx context.Context, phone string) error {
+	_, err := r.collection.DeleteOne(ctx, bson.M{"phone": phone})
+	return err
 }

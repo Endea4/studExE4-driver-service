@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -27,12 +31,106 @@ func main() {
 	debtRepo := repository.NewDebtRepository(db)
 	ratingRepo := repository.NewRatingRepository(db)
 
+	userServiceURL := config.GetEnv("USER_SERVICE_URL", "http://localhost:8081")
+
 	r := gin.Default()
+
+	r.POST("/admin/drivers", func(c *gin.Context) {
+		var req struct {
+			Phone       string `json:"phone" binding:"required"`
+			Name        string `json:"name"`
+			DisplayName string `json:"display_name"`
+			Gender      string `json:"gender"`
+			VehicleType string `json:"vehicle_type" binding:"required"`
+			PlateNumber string `json:"plate_number" binding:"required"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		existing, _ := driverRepo.GetByPhone(c.Request.Context(), req.Phone)
+		if existing != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": "Driver already exists with this phone"})
+			return
+		}
+
+		registerBody, _ := json.Marshal(map[string]string{"phone": req.Phone})
+		resp, err := http.Post(userServiceURL+"/users/register", "application/json", bytes.NewBuffer(registerBody))
+		if err != nil {
+			fmt.Printf("Admin: Failed to call user-service register: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to call user-service"})
+			return
+		}
+		defer resp.Body.Close()
+
+		isNewUser := resp.StatusCode == http.StatusCreated
+
+		if isNewUser && req.Name != "" {
+			personalizeBody, _ := json.Marshal(map[string]string{
+				"name":         req.Name,
+				"display_name": req.DisplayName,
+				"gender":       req.Gender,
+			})
+			httpReq, _ := http.NewRequest(http.MethodPut,
+				userServiceURL+"/users/"+req.Phone+"/personalize",
+				bytes.NewBuffer(personalizeBody))
+			httpReq.Header.Set("Content-Type", "application/json")
+			http.DefaultClient.Do(httpReq)
+		}
+
+		getUserResp, err := http.Get(userServiceURL + "/users/" + req.Phone)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+			return
+		}
+		defer getUserResp.Body.Close()
+
+		var userResult struct {
+			ID string `json:"id"`
+		}
+		body, _ := io.ReadAll(getUserResp.Body)
+		json.Unmarshal(body, &userResult)
+
+		if userResult.ID == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse user ID"})
+			return
+		}
+
+		now := time.Now()
+		uID, _ := primitive.ObjectIDFromHex(userResult.ID)
+		driver := &models.Driver{
+			Phone:           req.Phone,
+			UserID:          uID,
+			VehicleType:     req.VehicleType,
+			PlateNumber:     req.PlateNumber,
+			IsActive:        true,
+			Status:          "offline",
+			ReputationScore: 0,
+			TotalOrders:     0,
+			TotalRejects:    0,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		}
+		if err := driverRepo.Create(c.Request.Context(), driver); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create driver"})
+			return
+		}
+
+		if isNewUser {
+			fmt.Printf("Admin: Created driver %s — new user registered + driver\n", req.Phone)
+		} else {
+			fmt.Printf("Admin: Created driver %s — linked to existing user %s\n", req.Phone, userResult.ID)
+		}
+		c.JSON(http.StatusCreated, driver)
+	})
 
 	r.POST("/drivers/auth", func(c *gin.Context) {
 		var req struct {
-			Phone  string `json:"phone" binding:"required"`
-			UserID string `json:"user_id"`
+			Phone       string `json:"phone" binding:"required"`
+			UserID      string `json:"user_id"`
+			VehicleType string `json:"vehicle_type"`
+			PlateNumber string `json:"plate_number"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "phone is required"})
@@ -46,12 +144,13 @@ func main() {
 			driver = &models.Driver{
 				Phone:           req.Phone,
 				UserID:          uID,
+				VehicleType:     req.VehicleType,
+				PlateNumber:     req.PlateNumber,
 				IsActive:        true,
-				IsOnline:        false,
 				Status:          "offline",
-				ReputationScore: 5.0,
+				ReputationScore: 0,
 				TotalOrders:     0,
-				TotalCancels:    0,
+				TotalRejects:    0,
 				CreatedAt:       now,
 				UpdatedAt:       now,
 			}
@@ -77,7 +176,7 @@ func main() {
 			phone = req.Phone
 		}
 		if phone != "" {
-			driverRepo.SetOnlineStatus(c.Request.Context(), phone, false)
+			driverRepo.Update(c.Request.Context(), phone, bson.M{"status": "offline"})
 		}
 		c.JSON(http.StatusOK, gin.H{"message": "logged out"})
 	})
@@ -103,12 +202,8 @@ func main() {
 			return
 		}
 		var req struct {
-			Name         *string `json:"name"`
-			DisplayName  *string `json:"display_name"`
-			Gender       *string `json:"gender"`
-			VehicleType  *string `json:"vehicle_type"`
-			PlateNumber  *string `json:"plate_number"`
-			ProfilePhoto *string `json:"profile_photo"`
+			VehicleType *string `json:"vehicle_type"`
+			PlateNumber *string `json:"plate_number"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -116,23 +211,11 @@ func main() {
 		}
 
 		update := bson.M{"updated_at": time.Now()}
-		if req.Name != nil {
-			update["name"] = *req.Name
-		}
-		if req.DisplayName != nil {
-			update["display_name"] = *req.DisplayName
-		}
-		if req.Gender != nil {
-			update["gender"] = *req.Gender
-		}
 		if req.VehicleType != nil {
 			update["vehicle_type"] = *req.VehicleType
 		}
 		if req.PlateNumber != nil {
 			update["plate_number"] = *req.PlateNumber
-		}
-		if req.ProfilePhoto != nil {
-			update["profile_photo"] = *req.ProfilePhoto
 		}
 
 		if err := driverRepo.Update(c.Request.Context(), phone, update); err != nil {
@@ -151,11 +234,9 @@ func main() {
 			return
 		}
 		var req struct {
-			Online       *bool   `json:"is_online"`
-			Status       *string `json:"status"`
-			VehicleType  *string `json:"vehicle_type"`
-			PlateNumber  *string `json:"plate_number"`
-			FCMToken     *string `json:"fcm_token"`
+			Status      *string `json:"status"`
+			VehicleType *string `json:"vehicle_type"`
+			PlateNumber *string `json:"plate_number"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -163,25 +244,8 @@ func main() {
 		}
 
 		update := bson.M{"updated_at": time.Now()}
-		if req.Online != nil {
-			update["is_online"] = *req.Online
-			if *req.Online {
-				update["status"] = "online"
-			} else {
-				update["status"] = "offline"
-			}
-		}
 		if req.Status != nil {
 			update["status"] = *req.Status
-		}
-		if req.PlateNumber != nil {
-			update["plate_number"] = *req.PlateNumber
-		}
-		if req.VehicleType != nil {
-			update["vehicle_type"] = *req.VehicleType
-		}
-		if req.FCMToken != nil {
-			update["fcm_token"] = *req.FCMToken
 		}
 
 		if err := driverRepo.Update(c.Request.Context(), phone, update); err != nil {
@@ -291,10 +355,28 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{
 			"reputation_score": driver.ReputationScore,
 			"total_orders":     driver.TotalOrders,
-			"total_cancels":    driver.TotalCancels,
+			"total_rejects":    driver.TotalRejects,
 			"total_ratings":    len(totalRatings),
 			"average_rating":   avgRating,
 		})
+	})
+
+	r.GET("/drivers", func(c *gin.Context) {
+		drivers, err := driverRepo.GetAll(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch drivers"})
+			return
+		}
+		c.JSON(http.StatusOK, drivers)
+	})
+
+	r.DELETE("/drivers/:phone", func(c *gin.Context) {
+		phone := c.Param("phone")
+		if err := driverRepo.Delete(c.Request.Context(), phone); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete driver"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Driver deleted"})
 	})
 
 	port := config.GetEnv("DRIVER_SERVICE_PORT", "8082")
