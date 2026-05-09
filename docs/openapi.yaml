@@ -1,0 +1,317 @@
+openapi: "3.0.3"
+info:
+  title: Driver Service
+  description: Driver role management — vehicle, plate, status, orders, ratings, debts
+  version: "1.0.0"
+
+servers:
+  - url: http://localhost:9080
+    description: Via API Gateway
+
+tags:
+  - name: Drivers
+    description: Driver operations
+  - name: Admin
+    description: Admin CRUD for drivers
+
+paths:
+  /drivers:
+    get:
+      tags: [Drivers]
+      summary: List all drivers
+      responses:
+        "200":
+          description: Array of drivers
+          content:
+            application/json:
+              example:
+                - id: "663f..."
+                  user_id: "663f..."
+                  phone: "628123456789"
+                  vehicle_type: Bike
+                  plate_number: "B 1234 ABC"
+                  status: ready
+                  is_active: true
+                  reputation_score: 4.5
+                  total_orders: 50
+                  total_rejects: 2
+
+  /drivers/auth:
+    post:
+      tags: [Drivers]
+      summary: Auth / create driver link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone:
+                  type: string
+                user_id:
+                  type: string
+                vehicle_type:
+                  type: string
+                plate_number:
+                  type: string
+      responses:
+        "200":
+          description: Driver auth token + driver object
+
+  /drivers/me:
+    get:
+      tags: [Drivers]
+      summary: Get driver by phone
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Driver object
+        "404":
+          description: Driver not found
+
+    put:
+      tags: [Drivers]
+      summary: Update driver vehicle/plate
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                vehicle_type:
+                  type: string
+                  example: Car
+                plate_number:
+                  type: string
+                  example: "B 5678 DEF"
+      responses:
+        "200":
+          description: Driver updated
+
+  /drivers/me/status:
+    put:
+      tags: [Drivers]
+      summary: Set driver status
+      description: Used by bot ?ready / ?unready commands
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [ready, offline, izin, cuti]
+                  example: ready
+      responses:
+        "200":
+          description: Status updated
+
+  /drivers/{phone}:
+    delete:
+      tags: [Drivers]
+      summary: Delete driver record
+      description: Does NOT delete the user in user-service
+      parameters:
+        - name: phone
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Driver deleted
+
+  /drivers/orders:
+    get:
+      tags: [Drivers]
+      summary: Get driver's orders
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of orders
+
+  /drivers/reputation:
+    get:
+      tags: [Drivers]
+      summary: Get driver reputation stats
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Reputation stats
+          content:
+            application/json:
+              example:
+                reputation_score: 4.5
+                total_orders: 50
+                total_rejects: 2
+                total_ratings: 48
+                average_rating: 4.5
+
+  /drivers/debts:
+    get:
+      tags: [Drivers]
+      summary: Get driver's debts
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of debts
+
+  /drivers/ratings/pending:
+    get:
+      tags: [Drivers]
+      summary: Get pending ratings
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of pending ratings
+
+  /drivers/ratings/{id}:
+    post:
+      tags: [Drivers]
+      summary: Submit a rating
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [score]
+              properties:
+                score:
+                  type: number
+                  minimum: 1
+                  maximum: 5
+                  example: 5
+                comment:
+                  type: string
+                  example: "Great driver!"
+      responses:
+        "200":
+          description: Rating submitted
+
+  /admin/drivers:
+    post:
+      tags: [Admin]
+      summary: Create driver (auto-creates User + Customer + Driver)
+      description: |
+        Dual flow:
+        - **New user**: registers User → personalizes → creates Driver
+        - **Existing user**: skips user creation, links Driver to existing User
+        Identity (name, gender) lives in user-service only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, vehicle_type, plate_number]
+              properties:
+                phone:
+                  type: string
+                  example: "628987654321"
+                name:
+                  type: string
+                  description: Only for new users. Omit for existing.
+                  example: "Jane Driver"
+                display_name:
+                  type: string
+                gender:
+                  type: string
+                vehicle_type:
+                  type: string
+                  example: Car
+                plate_number:
+                  type: string
+                  example: "D 5678 XYZ"
+      responses:
+        "201":
+          description: Driver created
+        "409":
+          description: Driver already exists with this phone
+
+components:
+  schemas:
+    Driver:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        phone:
+          type: string
+          description: Lookup identifier (denormalized)
+        vehicle_type:
+          type: string
+          enum: [Bike, Car]
+        plate_number:
+          type: string
+        inventory:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        status:
+          type: string
+          enum: [ready, offline, izin, cuti]
+        reputation_score:
+          type: number
+        total_orders:
+          type: integer
+        total_rejects:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
